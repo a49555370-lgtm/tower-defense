@@ -1,4 +1,4 @@
-﻿#include "raylib.h"
+#include "raylib.h"
 #include "queue.h"
 #include "priority_queue.h"
 #include "tree.h"
@@ -229,10 +229,17 @@ static void UpdateTowers(float dt) {
         if (tw->fireTimer > 0) continue;
         PQ_Clear(&targetPQ);
         for (i = 0; i < MAX_ENEMIES; i++) {
-            float d;
+            float d, progress, normHp, priority;
             if (!enemies[i].alive) continue;
             d = Dist(tw->x, tw->y, enemies[i].x, enemies[i].y);
-            if (d <= tw->range) PQ_Insert(&targetPQ, i, d);
+            if (d <= tw->range) {
+                /* 경로 진행도(60%)와 HP(40%)를 합산하여 우선순위 결정
+                 * 가장 멀리 와있으면서 HP가 낮은 적을 우선 타겟으로 선정 */
+                progress = (float)enemies[i].pathIndex / PATH_LEN;
+                normHp = enemies[i].hp / 1000.0f;
+                priority = (1.0f - progress) * 0.6f + normHp * 0.4f;
+                PQ_Insert(&targetPQ, i, priority);
+            }
         }
         if (PQ_IsEmpty(&targetPQ)) continue;
         targetIdx = PQ_ExtractMin(&targetPQ);
@@ -334,11 +341,11 @@ static void UpgradeTower(int tIdx) {
 
 /* sellQueue의 front에서 업그레이드 이력을 꺼내 환불 처리
  * FIFO 구조로 가장 먼저 업그레이드된 타워(보스가 먼저 지나친 타워)부터 처리
- * 이전 스탯 복원 및 골드 환급, SkillTree 레벨 잠금 */
+ * 이전 스탯 복원 및 골드 환급, SkillTree 레벨 이상 전부 잠금 */
 static void SellUpgrade(void) {
     UpgradeInfo info;
     struct Tower* tw;
-    int cost;
+    int cost, lv;
     if (SellQueue_IsEmpty(&sellQueue)) return;
     info = SellQueue_Dequeue(&sellQueue);
     tw = &towers[info.towerIdx];
@@ -349,7 +356,10 @@ static void SellUpgrade(void) {
     tw->damage = info.prevDamage;
     tw->range = info.prevRange;
     tw->fireRate = info.prevRate;
-    SkillTree_Lock(&skillTree, info.towerIdx, info.prevLevel + 1);
+    /* prevLevel+1 이상의 모든 레벨 잠금
+     * 예: Lv0→Lv1 판매 시 Lv1, Lv2 전부 잠금 */
+    for (lv = info.prevLevel + 1; lv < MAX_LEVELS; lv++)
+        SkillTree_Lock(&skillTree, info.towerIdx, lv);
 }
 
 /* 게임 상태 전체 초기화
